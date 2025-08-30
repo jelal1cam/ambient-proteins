@@ -3,7 +3,7 @@
 
 By [Giannis Daras*](mailto:gdaras@mit.edu), [Jeffrey Ouyang-Zhang*](mailto:jozhang@utexas.edu), [Krithika Ravishankar](mailto:krithravi@utexas.edu), [William Daspit](mailto:willdaspit@gmail.com), [Costis Daskalakis](mailto:costis@csail.mit.edu), [Qiang Liu](mailto:lqiang@cs.utexas.edu), [Adam Klivans](https://www.cs.utexas.edu/users/klivans/), [Daniel J. Diaz](http://danny305.github.io)
 
-This repository contains the official implementation of the paper [Ambient Proteins: Training Diffusion Models on Low Quality Structures](dead_link). The codebase supports training and sampling with Ambient Protein Diffusion models.
+This repository contains the official implementation of the paper [Ambient Proteins: Training Diffusion Models on Low Quality Structures]([dead_link](https://www.biorxiv.org/content/10.1101/2025.07.03.663105v1)). The codebase supports training and sampling with Ambient Protein Diffusion models.
 
 ![](ambient.png)
 
