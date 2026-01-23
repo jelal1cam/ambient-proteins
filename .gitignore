@@ -1,0 +1,41 @@
+# Python
+__pycache__/
+*.pyc
+*.egg-info/
+
+# Jupyter
+.ipynb_checkpoints/
+
+# Claude Code (hide usage)
+.claude/
+
+# Investigation outputs
+_investigation/checkpoints/*.pt
+_investigation/checkpoints/*.ckpt
+_investigation/checkpoints/*.json
+_investigation/checkpoints/*.png
+_investigation/checkpoints/*.pdf
+_investigation/outputs/
+_investigation/data/
+
+# Model checkpoints
+runs/*/version_*/
+runs/*/outputs/
+
+# Large data
+data/afdb_tm40/
+data/afdb_tm50/
+
+# Logs
+wandb/
+
+# Private investigation work
+_investigation/
+sync_to_server.sh
+sync_from_server.sh
+pyproject.toml
+
+# Downloaded model checkpoints
+runs/ambient_short/
+runs/ambient_long/
+runs/improved_genie2/
