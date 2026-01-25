@@ -1,5 +1,6 @@
 import torch
 from torch import nn
+from torch.nn import functional as F
 from itertools import groupby
 
 from genie.utils.geo_utils import distance
@@ -52,6 +53,11 @@ class PairFeatureNet(nn.Module):
         self.c_s = c_s
         self.c_p = c_p
         self.n_timestep = n_timestep
+
+        # Soft binning for differentiable optimisation
+        # When enabled, uses temperature-controlled softmax instead of hard argmin
+        self.soft_binning = False
+        self.binning_temperature = 10.0  # Higher = sharper (closer to hard binning)
 
         # Layers for outer sum of single representations
         self.linear_s_p_i = nn.Linear(c_s, c_p, bias=False)
@@ -222,6 +228,12 @@ class PairFeatureNet(nn.Module):
         """
         Encode pairwise distances for a sequence of coordinates.
 
+        Supports two modes:
+        - Hard binning (default): Uses argmin for exact bin assignment.
+          Non-differentiable but matches pretrained model behaviour.
+        - Soft binning: Uses temperature-controlled softmax for differentiable
+          bin assignment. Enable with `self.soft_binning = True`.
+
         Args:
             coords:
                 [B, N, 3] A sequence of atom positions.
@@ -239,22 +251,28 @@ class PairFeatureNet(nn.Module):
             coords.unsqueeze(1).repeat(1, coords.shape[1], 1, 1),
         ], dim=-2))
 
-        # Distane bins
+        # Distance bins
         # Shape: [n_bin]
-        v = torch.arange(0, self.template_dist_n_bin).to(coords.device)
+        v = torch.arange(0, self.template_dist_n_bin, device=coords.device, dtype=coords.dtype)
         v = self.template_dist_min + v * self.template_dist_step
 
         # Reshaped distance bins
         # Shape: [1, 1, 1, n_bin]
         v_reshaped = v.view(*((1,) * len(d.shape) + (len(v),)))
 
-        # Pairwise distance bin matrix
-        # Shape: [B, N, N]
-        b = torch.argmin(torch.abs(d.unsqueeze(-1) - v_reshaped), dim=-1)
+        if self.soft_binning:
+            # DIFFERENTIABLE: temperature-controlled softmax
+            # Higher temperature = sharper distribution (closer to hard binning)
+            diffs = d.unsqueeze(-1) - v_reshaped
+            oh = F.softmax(-self.binning_temperature * torch.abs(diffs), dim=-1)
+        else:
+            # ORIGINAL: hard binning (for inference/pretrained compatibility)
+            # Shape: [B, N, N]
+            b = torch.argmin(torch.abs(d.unsqueeze(-1) - v_reshaped), dim=-1)
 
-        # Pairwise distance bin encoding
-        # Shape: [B, N, N, n_bin]
-        oh = nn.functional.one_hot(b, num_classes=len(v)).float()
+            # Pairwise distance bin encoding
+            # Shape: [B, N, N, n_bin]
+            oh = nn.functional.one_hot(b, num_classes=len(v)).float()
 
         # Pairwise mask
         # Shape: [B, N, N]
