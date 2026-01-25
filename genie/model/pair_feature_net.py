@@ -137,8 +137,8 @@ class PairFeatureNet(nn.Module):
         # Aggregate pair representation with pairwise relative position 
         # encoding and template-based encodings
         # Shape: [B, N, N, c_p]
-        p += self._relpos(features)
-        p += self.linear_template(
+        p = p + self._relpos(features)
+        p = p + self.linear_template(
             torch.cat([
                 self._encode_positions(
                     ts.trans,
@@ -150,9 +150,9 @@ class PairFeatureNet(nn.Module):
                 ),
                 features['fixed_structure_mask'].unsqueeze(-1),
                 features['fixed_structure_mask'].unsqueeze(-1)
-            ], axis=-1) 
+            ], axis=-1)
         )
-        p += self.linear_motif_template(
+        p = p + self.linear_motif_template(
             torch.cat([
                 self._encode_positions(
                     features['atom_positions'],
