@@ -255,7 +255,7 @@ class Attention(nn.Module):
         a *= norm
         if(biases is not None):
             for b in biases:
-                a = a + b
+                a += b
         a = self.softmax(a)
 
         # [*, H, Q, C_hidden]

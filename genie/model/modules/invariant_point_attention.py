@@ -186,7 +186,7 @@ class InvariantPointAttention(nn.Module):
             permute_final_dims(k, 1, 2, 0), # [*, H, C_hidden, N_res]
         )
         a *= math.sqrt(1. / (3 * self.c_hidden))
-        a = a + math.sqrt(1. / 3) * permute_final_dims(b, 2, 0, 1)
+        a += math.sqrt(1. / 3) * permute_final_dims(b, 2, 0, 1)
 
         # [*, N_res, N_res, H, P_q, 3]
         pt_att = q_pts.unsqueeze(-4) - k_pts.unsqueeze(-5)
@@ -209,8 +209,8 @@ class InvariantPointAttention(nn.Module):
 
         # [*, H, N_res, N_res]
         pt_att = permute_final_dims(pt_att, 2, 0, 1)
-        a = a + pt_att
-        a = a + square_mask.unsqueeze(-3)
+        a += pt_att
+        a += square_mask.unsqueeze(-3)
         a = self.softmax(a)
 
         ################
