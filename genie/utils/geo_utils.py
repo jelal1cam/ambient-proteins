@@ -49,12 +49,12 @@ def compute_frenet_frames(coords, chains, mask, eps=1e-10):
     t = t / t_norm.unsqueeze(-1)
 
     # [B, N-2, 3]
-    b = torch.cross(t[:, :-1], t[:, 1:])
+    b = torch.cross(t[:, :-1], t[:, 1:], dim=-1)
     b_norm = torch.sqrt(eps + torch.sum(b ** 2, dim=-1))
     b = b / b_norm.unsqueeze(-1)
 
     # [B, N-2, 3]
-    n = torch.cross(b, t[:, 1:])
+    n = torch.cross(b, t[:, 1:], dim=-1)
 
     # [B, N-2, 3, 3]
     tbn = torch.stack([t[:, 1:], b, n], dim=-1)

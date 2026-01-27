@@ -1,6 +1,7 @@
 import torch
 import numpy as np
 from abc import ABC, abstractmethod
+from tqdm import tqdm
 
 from genie.utils.affine_utils import T
 from genie.utils.geo_utils import compute_frenet_frames
@@ -218,10 +219,10 @@ class BaseSampler(ABC):
         ts = T(rots, trans)
 
         # Define steps
-        steps = reversed(np.arange(1, self.model.config.diffusion['n_timestep'] + 1))
+        steps = list(reversed(np.arange(1, self.model.config.diffusion['n_timestep'] + 1)))
 
         # Iterate
-        for step in steps:
+        for step in tqdm(steps, desc='Sampling', leave=False):
 
             # Define current diffusion timestep
             timesteps = torch.Tensor([step] * params['num_samples']).int().to(self.device)
