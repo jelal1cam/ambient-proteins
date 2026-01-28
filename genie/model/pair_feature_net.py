@@ -6,6 +6,8 @@ from itertools import groupby
 from genie.utils.geo_utils import distance
 from genie.utils.affine_utils import rot_to_quat
 
+BINNING_KERNELS = ('hard', 'softmax', 'gaussian')
+
 
 class PairFeatureNet(nn.Module):
     """
@@ -54,10 +56,10 @@ class PairFeatureNet(nn.Module):
         self.c_p = c_p
         self.n_timestep = n_timestep
 
-        # Soft binning for differentiable optimisation
-        # When enabled, uses temperature-controlled softmax instead of hard argmin
-        self.soft_binning = False
-        self.binning_temperature = 10.0  # Higher = sharper (closer to hard binning)
+        # Binning configuration for differentiable optimisation
+        # Options: 'hard' (default), 'softmax', 'gaussian'
+        self.binning_kernel = 'hard'
+        self.binning_temperature = 1.0  # Higher = softer (standard convention)
 
         # Layers for outer sum of single representations
         self.linear_s_p_i = nn.Linear(c_s, c_p, bias=False)
@@ -74,6 +76,16 @@ class PairFeatureNet(nn.Module):
         self.template_dist_n_bin = template_dist_n_bin
         self.linear_template = nn.Linear(self.template_dist_n_bin + 6, c_p, bias=False)
         self.linear_motif_template = nn.Linear(self.template_dist_n_bin + 2, c_p, bias=False)
+
+    @property
+    def soft_binning(self):
+        """Backward-compatible property: True if using any soft binning kernel."""
+        return self.binning_kernel != 'hard'
+
+    @soft_binning.setter
+    def soft_binning(self, value):
+        """Backward-compatible setter: sets kernel to 'softmax' if True, 'hard' if False."""
+        self.binning_kernel = 'softmax' if value else 'hard'
 
     def forward(self, s, ts, timesteps, features):
         """
@@ -228,11 +240,16 @@ class PairFeatureNet(nn.Module):
         """
         Encode pairwise distances for a sequence of coordinates.
 
-        Supports two modes:
-        - Hard binning (default): Uses argmin for exact bin assignment.
+        Supports three binning kernels (set via `self.binning_kernel`):
+        - 'hard' (default): Uses argmin for exact bin assignment.
           Non-differentiable but matches pretrained model behaviour.
-        - Soft binning: Uses temperature-controlled softmax for differentiable
-          bin assignment. Enable with `self.soft_binning = True`.
+        - 'softmax': Uses softmax(-|d - c| / T) for differentiable binning.
+          Has a V-shaped kink at the peak (non-smooth gradient).
+        - 'gaussian': Uses softmax(-(d - c)^2 / T) for differentiable binning.
+          Provides smoother gradients (parabolic peak), better for optimisation.
+
+        Temperature convention (standard): higher T = softer distribution,
+        lower T = sharper distribution (closer to hard binning).
 
         Args:
             coords:
@@ -260,19 +277,35 @@ class PairFeatureNet(nn.Module):
         # Shape: [1, 1, 1, n_bin]
         v_reshaped = v.view(*((1,) * len(d.shape) + (len(v),)))
 
-        if self.soft_binning:
-            # DIFFERENTIABLE: temperature-controlled softmax
-            # Higher temperature = sharper distribution (closer to hard binning)
-            diffs = d.unsqueeze(-1) - v_reshaped
-            oh = F.softmax(-self.binning_temperature * torch.abs(diffs), dim=-1)
-        else:
+        # Compute differences for binning
+        # Shape: [B, N, N, n_bin]
+        diffs = d.unsqueeze(-1) - v_reshaped
+
+        if self.binning_kernel == 'hard':
             # ORIGINAL: hard binning (for inference/pretrained compatibility)
+            # Non-differentiable argmin + one-hot
             # Shape: [B, N, N]
-            b = torch.argmin(torch.abs(d.unsqueeze(-1) - v_reshaped), dim=-1)
+            b = torch.argmin(torch.abs(diffs), dim=-1)
 
             # Pairwise distance bin encoding
             # Shape: [B, N, N, n_bin]
             oh = nn.functional.one_hot(b, num_classes=len(v)).float()
+
+        elif self.binning_kernel == 'softmax':
+            # DIFFERENTIABLE: softmax(-|d - c| / T)
+            # Standard temperature convention: higher T = softer distribution
+            # Lower T = sharper distribution (closer to hard binning)
+            oh = F.softmax(-torch.abs(diffs) / self.binning_temperature, dim=-1)
+
+        elif self.binning_kernel == 'gaussian':
+            # DIFFERENTIABLE: softmax(-(d - c)^2 / T)
+            # Gaussian kernel provides smoother gradients at the peak
+            # Higher T = softer, Lower T = sharper
+            oh = F.softmax(-diffs.pow(2) / self.binning_temperature, dim=-1)
+
+        else:
+            raise ValueError(f"Unknown binning kernel: '{self.binning_kernel}'. "
+                           f"Valid options: {BINNING_KERNELS}")
 
         # Pairwise mask
         # Shape: [B, N, N]
