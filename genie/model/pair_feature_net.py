@@ -77,16 +77,6 @@ class PairFeatureNet(nn.Module):
         self.linear_template = nn.Linear(self.template_dist_n_bin + 6, c_p, bias=False)
         self.linear_motif_template = nn.Linear(self.template_dist_n_bin + 2, c_p, bias=False)
 
-    @property
-    def soft_binning(self):
-        """Backward-compatible property: True if using any soft binning kernel."""
-        return self.binning_kernel != 'hard'
-
-    @soft_binning.setter
-    def soft_binning(self, value):
-        """Backward-compatible setter: sets kernel to 'softmax' if True, 'hard' if False."""
-        self.binning_kernel = 'softmax' if value else 'hard'
-
     def forward(self, s, ts, timesteps, features):
         """
         Args:
