@@ -319,6 +319,16 @@ _qtr_mat[..., 2, 0] = _to_mat([('bd', 2), ('ac', -2)])
 _qtr_mat[..., 2, 1] = _to_mat([('cd', 2), ('ab', 2)])
 _qtr_mat[..., 2, 2] = _to_mat([('aa', 1), ('bb', -1), ('cc', -1), ('dd', 1)])
 
+# Cache for device-specific versions of _qtr_mat (enables cudagraphs with torch.compile)
+_qtr_mat_cache = {}
+
+@torch.compiler.disable  # Prevent tracing into cache logic, enables cudagraphs
+def _get_qtr_mat(device):
+    """Get _qtr_mat on the specified device, caching to avoid repeated transfers."""
+    if device not in _qtr_mat_cache:
+        _qtr_mat_cache[device] = _qtr_mat.to(device)
+    return _qtr_mat_cache[device]
+
 def quat_to_rot(
     quat           # [*, 4]
 ):
@@ -326,8 +336,10 @@ def quat_to_rot(
     quat = quat[..., None] * quat[..., None, :]
 
     # [*, 4, 4, 3, 3]
-    shaped_qtr_mat = _qtr_mat.view((1,) * len(quat.shape[:-2]) + (4, 4, 3, 3))
-    quat = quat[..., None, None] * shaped_qtr_mat.to(quat.device)
+    # Use cached device-specific tensor to enable cudagraphs
+    qtr_mat_device = _get_qtr_mat(quat.device)
+    shaped_qtr_mat = qtr_mat_device.view((1,) * len(quat.shape[:-2]) + (4, 4, 3, 3))
+    quat = quat[..., None, None] * shaped_qtr_mat
 
     # [*, 3, 3]
     return torch.sum(quat, dim=(-3, -4))
@@ -350,5 +362,11 @@ def rot_to_quat(
 
     k = (1./3.) * torch.stack([torch.stack(t, dim=-1) for t in k], dim=-2)
 
+    # linalg.eigh doesn't support bfloat16, so cast to float32 and back
+    orig_dtype = k.dtype
+    if k.dtype == torch.bfloat16:
+        k = k.float()
     _, vectors = torch.linalg.eigh(k)
+    if orig_dtype == torch.bfloat16:
+        vectors = vectors.to(orig_dtype)
     return vectors[..., -1]

@@ -1,4 +1,6 @@
+import torch
 from torch import nn
+from torch.utils.checkpoint import checkpoint
 
 from genie.model.modules.pair_transition import PairTransition
 from genie.model.modules.triangular_attention import (
@@ -125,6 +127,10 @@ class PairTransformNet(nn.Module):
     Adapted from Evoformer, this module utilizes multiple pair transform
     layers to refine pair representations before using them in the
     structure module.
+
+    Supports gradient checkpointing to reduce memory usage for large proteins.
+    When enabled, activations are recomputed during backward pass instead of
+    being stored, trading compute for memory (typically 4-10x memory reduction).
     """
 
     def __init__(
@@ -162,8 +168,14 @@ class PairTransformNet(nn.Module):
         """
         super(PairTransformNet, self).__init__()
 
-        # Create pair transform layers
-        layers = [
+        # Gradient checkpointing configuration
+        # Set via set_checkpointing() method after model creation
+        self.use_checkpointing = False
+        self.blocks_per_ckpt = 1  # Number of layers per checkpoint block
+
+        # Create pair transform layers using Sequential (maintains checkpoint compatibility)
+        # Access layers via self.net[i] for checkpointing
+        self.net = nn.Sequential(*[
             PairTransformLayer(
                 c_p,
                 include_mul_update,
@@ -175,10 +187,19 @@ class PairTransformNet(nn.Module):
                 pair_transition_n
             )
             for _ in range(n_pair_transform_layer)
-        ]
+        ])
 
-        # Create model
-        self.net = nn.Sequential(*layers)
+    def set_checkpointing(self, enabled=True, blocks_per_ckpt=1):
+        """Enable or disable gradient checkpointing.
+
+        Args:
+            enabled: Whether to use gradient checkpointing.
+            blocks_per_ckpt: Number of layers to group per checkpoint.
+                Higher values = fewer checkpoints = less memory savings but faster.
+                Recommended: 1 for maximum memory savings, 2-3 for balance.
+        """
+        self.use_checkpointing = enabled
+        self.blocks_per_ckpt = blocks_per_ckpt
 
     def forward(self, p, features):
         """
@@ -186,29 +207,29 @@ class PairTransformNet(nn.Module):
             p:
                 [B, N, N, c_p] Pair representation.
             features:
-                A batched feature dictionary with a batch size B, where each 
-                structure is padded to the maximum sequence length N. It contains 
+                A batched feature dictionary with a batch size B, where each
+                structure is padded to the maximum sequence length N. It contains
                 the following information
-                    -   aatype: 
+                    -   aatype:
                             [B, N, 20] one-hot encoding on amino acid types
-                    -   num_chains: 
+                    -   num_chains:
                             [B, 1] number of chains in the structure
-                    -   num_residues: 
+                    -   num_residues:
                             [B, 1] number of residues in the structure
-                    -   num_residues_per_chain: 
+                    -   num_residues_per_chain:
                             [B, 1] an array of number of residues by chain
-                    -   atom_positions: 
+                    -   atom_positions:
                             [B, N, 3] an array of Ca atom positions
-                    -   residue_mask: 
+                    -   residue_mask:
                             [B, N] residue mask to indicate which residue position is masked
-                    -   residue_index: 
+                    -   residue_index:
                             [B, N] residue index (started from 0)
-                    -   chain_index: 
+                    -   chain_index:
                             [B, N] chain index (started from 0)
-                    -   fixed_sequence_mask: 
+                    -   fixed_sequence_mask:
                             [B, N] mask to indicate which residue contains conditional
                             sequence information
-                    -   fixed_structure_mask: 
+                    -   fixed_structure_mask:
                             [B, N, N] mask to indicate which pair of residues contains
                             conditional structural information
                     -   fixed_group:
@@ -224,9 +245,35 @@ class PairTransformNet(nn.Module):
         # Pairwise residue mask
         # Shape: [B, N, N]
         pair_residue_mask = features['residue_mask'].unsqueeze(1) * features['residue_mask'].unsqueeze(2)
-        
-        # Update pair representations
-        # Shape: [B, N, N, c_p]
-        p, _ = self.net((p, pair_residue_mask))
+
+        # Determine if we should use checkpointing
+        # Only checkpoint when gradients are enabled (training/optimization)
+        use_ckpt = self.use_checkpointing and torch.is_grad_enabled()
+
+        if use_ckpt:
+            # Process layers with gradient checkpointing
+            # Group layers into blocks for efficiency
+            n_layers = len(self.net)
+            for i in range(0, n_layers, self.blocks_per_ckpt):
+                block_end = min(i + self.blocks_per_ckpt, n_layers)
+                # Access layers from self.net (Sequential is indexable)
+                block_layers = [self.net[j] for j in range(i, block_end)]
+
+                # Define block function for checkpointing
+                def run_block(p_in, mask_in, layers=block_layers):
+                    p_out, mask_out = p_in, mask_in
+                    for layer in layers:
+                        p_out, mask_out = layer((p_out, mask_out))
+                    return p_out, mask_out
+
+                # Checkpoint the block
+                # use_reentrant=False is recommended for newer PyTorch versions
+                p, pair_residue_mask = checkpoint(
+                    run_block, p, pair_residue_mask,
+                    use_reentrant=False
+                )
+        else:
+            # Standard forward pass without checkpointing
+            p, _ = self.net((p, pair_residue_mask))
 
         return p

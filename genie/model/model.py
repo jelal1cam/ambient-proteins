@@ -122,6 +122,34 @@ class Denoiser(nn.Module):
             structure_transition_dropout=structure_transition_dropout
         )
 
+    def set_checkpointing(self, enabled=True, blocks_per_ckpt=1):
+        """Enable or disable gradient checkpointing for memory-intensive modules.
+
+        Gradient checkpointing reduces memory usage by recomputing activations
+        during the backward pass instead of storing them. This typically provides
+        4-10x memory reduction at the cost of ~2x slower backward pass.
+
+        Recommended for:
+        - Large proteins (>400 residues) on GPUs with <32GB memory
+        - Gradient-based optimization (e.g., Riemannian optimization)
+        - Any situation where OOM errors occur during backpropagation
+
+        Args:
+            enabled: Whether to use gradient checkpointing.
+            blocks_per_ckpt: Number of layers to group per checkpoint.
+                - 1: Maximum memory savings (recommended for large proteins)
+                - 2-3: Balance between memory and speed
+                - Higher: Less memory savings but faster
+
+        Example:
+            >>> model = load_pretrained_model(...)
+            >>> model.model.set_checkpointing(enabled=True, blocks_per_ckpt=1)
+            >>> # Now forward passes with gradients will use less memory
+        """
+        if self.pair_transform_net is not None:
+            self.pair_transform_net.set_checkpointing(enabled, blocks_per_ckpt)
+        self.structure_net.set_checkpointing(enabled, blocks_per_ckpt)
+
     def forward(self, ts, timesteps, features):
         """
         Args:
