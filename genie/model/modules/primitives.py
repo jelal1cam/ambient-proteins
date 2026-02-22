@@ -20,6 +20,7 @@ import numpy as np
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from scipy.stats import truncnorm
 
 from genie.utils.tensor_utils import (
@@ -217,7 +218,6 @@ class Attention(nn.Module):
             self.linear_g = Linear(self.c_q, self.c_hidden * self.no_heads, init="gating")
 
         self.sigmoid = nn.Sigmoid()
-        self.softmax = nn.Softmax(dim=-1)
 
     def forward(self, 
         q_x: torch.Tensor, 
@@ -246,22 +246,17 @@ class Attention(nn.Module):
         k = k.view(*k.shape[:-1], self.no_heads, -1)
         v = v.view(*v.shape[:-1], self.no_heads, -1)
 
-        # [*, H, Q, K]
-        a = torch.matmul(
-            permute_final_dims(q, 1, 0, 2),  # [*, H, Q, C_hidden]
-            permute_final_dims(k, 1, 2, 0),  # [*, H, C_hidden, K] 
-        )
-        norm = 1 / math.sqrt(self.c_hidden) # [1]
-        a *= norm
-        if(biases is not None):
-            for b in biases:
-                a = a + b
-        a = self.softmax(a)
+        # [*, H, Q/K/V, C_hidden]
+        q = permute_final_dims(q, 1, 0, 2)
+        k = permute_final_dims(k, 1, 0, 2)
+        v = permute_final_dims(v, 1, 0, 2)
+
+        # Pre-combine biases into a single attention mask for SDPA
+        attn_mask = sum(biases) if biases else None
 
         # [*, H, Q, C_hidden]
-        o = torch.matmul(
-            a,
-            permute_final_dims(v, 1, 0, 2),  # [*, H, V, C_hidden]
+        o = F.scaled_dot_product_attention(
+            q, k, v, attn_mask=attn_mask, dropout_p=0.0, is_causal=False
         )
 
         # [*, Q, H, C_hidden]
