@@ -6,7 +6,7 @@ from itertools import groupby
 from genie.utils.geo_utils import distance
 from genie.utils.affine_utils import rot_to_quat
 
-BINNING_KERNELS = ('hard', 'softmax', 'gaussian')
+BINNING_KERNELS = ('hard', 'softmax', 'gaussian', 'colabdesign', 'colabdesign_ste')
 
 
 class PairFeatureNet(nn.Module):
@@ -57,7 +57,7 @@ class PairFeatureNet(nn.Module):
         self.n_timestep = n_timestep
 
         # Binning configuration for differentiable optimisation
-        # Options: 'hard' (default), 'softmax', 'gaussian'
+        # Options: 'hard' (default), 'softmax', 'gaussian', 'colabdesign', 'colabdesign_ste'
         self.binning_kernel = 'hard'
         self.binning_temperature = 1.0  # Higher = softer (standard convention)
 
@@ -230,13 +230,17 @@ class PairFeatureNet(nn.Module):
         """
         Encode pairwise distances for a sequence of coordinates.
 
-        Supports three binning kernels (set via `self.binning_kernel`):
+        Supports five binning kernels (set via `self.binning_kernel`):
         - 'hard' (default): Uses argmin for exact bin assignment.
           Non-differentiable but matches pretrained model behaviour.
         - 'softmax': Uses softmax(-|d - c| / T) for differentiable binning.
           Has a V-shaped kink at the peak (non-smooth gradient).
         - 'gaussian': Uses softmax(-(d - c)^2 / T) for differentiable binning.
           Provides smoother gradients (parabolic peak), better for optimisation.
+        - 'colabdesign': Uses sigmoid((d - lower)/T) * sigmoid((upper - d)/T).
+          Community standard from ColabDesign/BindCraft. Proven in protein design.
+        - 'colabdesign_ste': Straight-through estimator variant of colabdesign.
+          Hard forward pass (exact bins), soft backward pass (gradients flow).
 
         Temperature convention (standard): higher T = softer distribution,
         lower T = sharper distribution (closer to hard binning).
@@ -277,9 +281,9 @@ class PairFeatureNet(nn.Module):
             # Shape: [B, N, N]
             b = torch.argmin(torch.abs(diffs), dim=-1)
 
-            # Pairwise distance bin encoding
+            # Pairwise distance bin encoding (vmap-compatible, avoids scatter_)
             # Shape: [B, N, N, n_bin]
-            oh = nn.functional.one_hot(b, num_classes=len(v)).float()
+            oh = (b.unsqueeze(-1) == torch.arange(len(v), device=b.device)).float()
 
         elif self.binning_kernel == 'softmax':
             # DIFFERENTIABLE: softmax(-|d - c| / T)
@@ -292,6 +296,61 @@ class PairFeatureNet(nn.Module):
             # Gaussian kernel provides smoother gradients at the peak
             # Higher T = softer, Lower T = sharper
             oh = F.softmax(-diffs.pow(2) / self.binning_temperature, dim=-1)
+
+        elif self.binning_kernel == 'colabdesign':
+            # ColabDesign-style soft binning (community standard)
+            # Uses product of sigmoids to create soft window for each bin
+            # Reference: github.com/sokrypton/ColabDesign
+            #
+            # Each bin has lower and upper bounds computed from centres
+            # sigmoid((d - lower)/T) * sigmoid((upper - d)/T) creates soft membership
+            half_step = self.template_dist_step / 2
+            lower_bounds = v_reshaped - half_step  # [1, 1, 1, n_bin]
+            upper_bounds = v_reshaped + half_step  # [1, 1, 1, n_bin]
+
+            # Edge handling: use -inf/+inf for first/last bins to capture all distances
+            # This matches ColabDesign's approach for handling distances outside the bin range
+            lower_bounds = lower_bounds.clone()
+            upper_bounds = upper_bounds.clone()
+            lower_bounds[..., 0] = -1e8
+            upper_bounds[..., -1] = 1e8
+
+            d_expanded = d.unsqueeze(-1)  # [B, N, N, 1]
+
+            # Product of sigmoids creates soft window
+            oh = (torch.sigmoid((d_expanded - lower_bounds) / self.binning_temperature) *
+                  torch.sigmoid((upper_bounds - d_expanded) / self.binning_temperature))
+
+            # Normalise to sum to 1
+            oh = oh / (oh.sum(-1, keepdim=True) + 1e-8)
+
+        elif self.binning_kernel == 'colabdesign_ste':
+            # Straight-through estimator: hard forward, soft backward
+            # Forward: use hard binning for exact pretrained compatibility
+            b = torch.argmin(torch.abs(diffs), dim=-1)
+            # vmap-compatible one_hot (avoids scatter_ which lacks batching rule)
+            oh_hard = (b.unsqueeze(-1) == torch.arange(len(v), device=b.device)).float()
+
+            # Backward: use ColabDesign soft binning for gradient flow
+            half_step = self.template_dist_step / 2
+            lower_bounds = v_reshaped - half_step
+            upper_bounds = v_reshaped + half_step
+
+            # Edge handling: use -inf/+inf for first/last bins to capture all distances
+            lower_bounds = lower_bounds.clone()
+            upper_bounds = upper_bounds.clone()
+            lower_bounds[..., 0] = -1e8
+            upper_bounds[..., -1] = 1e8
+
+            d_expanded = d.unsqueeze(-1)
+            oh_soft = (torch.sigmoid((d_expanded - lower_bounds) / self.binning_temperature) *
+                       torch.sigmoid((upper_bounds - d_expanded) / self.binning_temperature))
+            oh_soft = oh_soft / (oh_soft.sum(-1, keepdim=True) + 1e-8)
+
+            # STE: hard values, soft gradients
+            # Forward: oh_soft - oh_soft + oh_hard = oh_hard
+            # Backward: gradients flow through oh_soft
+            oh = oh_soft - oh_soft.detach() + oh_hard
 
         else:
             raise ValueError(f"Unknown binning kernel: '{self.binning_kernel}'. "
