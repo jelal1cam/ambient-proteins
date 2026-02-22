@@ -1,6 +1,7 @@
 import os
 import glob
 import numpy as np
+import torch
 
 from genie.config import Config
 from genie.diffusion.genie import Genie
@@ -154,6 +155,11 @@ def load_pretrained_model(rootdir, name, epoch, map_location=None):
     Returns:
         An instance of Genie (defined in diffusion/genie.py).
     """
+
+    # Enable TF32 for faster matmuls on Ampere+ GPUs (no-op on older hardware)
+    torch.set_float32_matmul_precision('high')
+    torch.backends.cuda.matmul.allow_tf32 = True
+    torch.backends.cudnn.allow_tf32 = True
 
     # load configuration
     config = load_config(rootdir, name)
