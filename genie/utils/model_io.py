@@ -136,7 +136,7 @@ def load_model(rootdir, name, version=None, epoch=None):
     print('Loading checkpoint: {}'.format(ckpt_filepath))
     return Genie.load_from_checkpoint(ckpt_filepath, config=config)
 
-def load_pretrained_model(rootdir, name, epoch):
+def load_pretrained_model(rootdir, name, epoch, map_location=None):
     """
     Load pretrained Genie.
 
@@ -147,6 +147,9 @@ def load_pretrained_model(rootdir, name, epoch):
             Model name.
         epoch:
             Checkpoint epoch.
+        map_location:
+            Device to load the model to (e.g., 'cpu', 'cuda').
+            If None, loads to the device used during training.
 
     Returns:
         An instance of Genie (defined in diffusion/genie.py).
@@ -170,4 +173,4 @@ def load_pretrained_model(rootdir, name, epoch):
 
     # load model
     print('Loading checkpoint: {}'.format(ckpt_filepath))
-    return Genie.load_from_checkpoint(ckpt_filepath, config=config)
+    return Genie.load_from_checkpoint(ckpt_filepath, config=config, map_location=map_location)

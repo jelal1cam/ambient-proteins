@@ -25,12 +25,20 @@ runs/*/outputs/
 # Large data
 data/afdb_tm40/
 data/afdb_tm50/
+authors_samples/
 
 # Logs
 wandb/
 
 # Private investigation work
 _investigation/
+
+# Safety-net: diagnostic figures (if notebooks run from wrong cwd)
+D[0-9]_*.png
+GE[0-9]_*.png
+JF[0-9]_*.png
+FH[0-9]_*.png
+SA_*.png
 sync_to_server.sh
 sync_from_server.sh
 pyproject.toml

@@ -109,7 +109,7 @@ def create_np_features_from_motif_pdb(filepath):
 
     # Parse
     spec = load_motif_spec(filepath)
-    motif_seqs, motif_coords = parse_pdb(filepath)
+    motif_seqs, _, motif_coords, _ = parse_pdb(filepath)
     motif_aatype = np.concatenate(motif_seqs)
     motif_aatype = np.eye(len(RESTYPES))[motif_aatype] # one-hot encoding
     motif_atom_positions = np.concatenate(motif_coords)
@@ -375,7 +375,7 @@ def summarize_pdb(filepath):
     """
     Get summary statistics for a PDB file.
     """
-    seqs, coords = parse_pdb(filepath)
+    seqs, _, coords, _ = parse_pdb(filepath)
     num_chains = len(seqs)
     num_residues = np.sum([len(seq) for seq in seqs])
     return {
@@ -407,7 +407,11 @@ def parse_pdb(pdb_f):
                 x = float(line[30:38])
                 y = float(line[38:46])
                 z = float(line[46:54])
-                plddt = float(line[60:66])
+                # Handle missing pLDDT (e.g., in generated samples)
+                try:
+                    plddt = float(line[60:66])
+                except ValueError:
+                    plddt = 0.0
 
                 # Create data structure
                 if current_chain is None or chain != current_chain:
