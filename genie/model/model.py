@@ -150,6 +150,17 @@ class Denoiser(nn.Module):
             self.pair_transform_net.set_checkpointing(enabled, blocks_per_ckpt)
         self.structure_net.set_checkpointing(enabled, blocks_per_ckpt)
 
+    def set_chunk_size(self, chunk_size):
+        """Set chunk_size for TriangleAttention and PairTransition layers.
+
+        Args:
+            chunk_size: Number of chunks for sequential processing.
+                None disables chunking (full parallel, uses more memory).
+                4 is the default (suitable for 24GB GPUs).
+        """
+        if self.pair_transform_net is not None:
+            self.pair_transform_net.set_chunk_size(chunk_size)
+
     def forward(self, ts, timesteps, features):
         """
         Args:

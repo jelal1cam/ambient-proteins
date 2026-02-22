@@ -201,6 +201,21 @@ class PairTransformNet(nn.Module):
         self.use_checkpointing = enabled
         self.blocks_per_ckpt = blocks_per_ckpt
 
+    def set_chunk_size(self, chunk_size):
+        """Set chunk_size for TriangleAttention and PairTransition layers.
+
+        Args:
+            chunk_size: Number of chunks for sequential processing.
+                None disables chunking (full parallel, uses more memory).
+                4 is the default (suitable for 24GB GPUs).
+        """
+        for layer in self.net:
+            if layer.tri_att_start is not None:
+                layer.tri_att_start.chunk_size = chunk_size
+            if layer.tri_att_end is not None:
+                layer.tri_att_end.chunk_size = chunk_size
+            layer.pair_transition.chunk_size = chunk_size
+
     def forward(self, p, features):
         """
         Args:
